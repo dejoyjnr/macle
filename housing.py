@@ -4,7 +4,7 @@ from sklearn.tree import DecisionTreeRegressor
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, KFold
 from sklearn.metrics import mean_absolute_error, make_scorer, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
-from sklearn.preprocessing import LabelEncoder, Imputer, RobustScaler
+from sklearn.preprocessing import LabelEncoder, Imputer, RobustScaler, Normalizer, QuantileTransformer, StandardScaler, MinMaxScaler, MaxAbsScaler
 from xgboost import XGBRegressor
 from sklearn.base import TransformerMixin, BaseEstimator, RegressorMixin, clone
 from sklearn.pipeline import make_pipeline, Pipeline
@@ -24,7 +24,7 @@ import lightgbm as lgb
 from scipy.special import boxcox1p
 
 lasso = make_pipeline(RobustScaler(), Lasso(alpha=0.0005, random_state=1))
-ENet = make_pipeline(RobustScaler(), ElasticNet(alpha=0.0005, l1_ratio=.9, random_state=3))
+ENet = make_pipeline(RobustScaler(), ElasticNet(alpha=0.0005, l1_ratio=.8, random_state=3))
 KRR = KernelRidge(alpha=0.6, kernel='polynomial', degree=2, coef0=2.5)
 GBoost = GradientBoostingRegressor(n_estimators=3000, learning_rate=0.05,
                                    max_depth=4, max_features='sqrt',
@@ -63,6 +63,16 @@ models = [LinearRegression(),
           SVR(),
           MLPRegressor()
           ]
+
+SVR_pl = make_pipeline(RobustScaler(quantile_range=(5, 95)), SVR(C=4, kernel='rbf', gamma=0.003, tol=1e-9))
+
+MLP_pl = make_pipeline(RobustScaler(quantile_range=(5, 95)), MLPRegressor(activation='logistic', hidden_layer_sizes=1500, learning_rate='invscaling',
+                     solver='lbfgs', alpha=0.00001, max_iter=1000))
+
+MLP_pl_shallow = make_pipeline(RobustScaler(quantile_range=(5, 95)), MLPRegressor(activation='logistic', hidden_layer_sizes=75, learning_rate='invscaling',
+                     solver='lbfgs', alpha=0.00001, max_iter=1000))
+
+BR_pl = make_pipeline(RobustScaler(quantile_range=(35, 65)), BayesianRidge())
 
 def housing():
 
@@ -173,9 +183,9 @@ def housing():
 
 
     def data_preprocess(train, test):
-        # outlier_idx = [4, 11, 13, 20, 46, 66, 70, 167, 178, 185, 199, 224, 261, 309, 313, 318, 349, 412, 423, 440, 454, 477, 478, 523, 540, 581, 588, 595,
-        #                654, 688, 691, 774, 798, 875, 898, 926, 970, 987, 1027, 1109, 1169, 1182, 1239, 1256, 1298, 1324, 1353, 1359, 1405, 1442, 1447]
-        # train.drop(train.index[outlier_idx], inplace=True)
+        outlier_idx = [4, 11, 13, 20, 46, 66, 70, 167, 178, 185, 199, 224, 261, 309, 313, 318, 349, 412, 423, 440, 454, 477, 478, 523, 540, 581, 588, 595,
+                       654, 688, 691, 774, 798, 875, 898, 926, 970, 987, 1027, 1109, 1169, 1182, 1239, 1256, 1298, 1324, 1353, 1359, 1405, 1442, 1447]
+        train.drop(train.index[outlier_idx], inplace=True)
         all_data = pd.concat((train.loc[:, 'MSSubClass':'SaleCondition'],
                               test.loc[:, 'MSSubClass':'SaleCondition']))
 
@@ -198,9 +208,9 @@ def housing():
         return X_train, X_test, y_train
 
     def preprocess_data(train, test):
-        outlier_idx = [4, 11, 13, 20, 46, 66, 70, 167, 178, 185, 199, 224, 261, 309, 313, 318, 349, 412, 423, 440, 454, 477, 478, 523, 540, 581, 588, 595,
-                       654, 688, 691, 774, 798, 875, 898, 926, 970, 987, 1027, 1109, 1169, 1182, 1239, 1256, 1298, 1324, 1353, 1359, 1405, 1442, 1447]
-        train.drop(train.index[outlier_idx], inplace=True)
+        # outlier_idx = [4, 11, 13, 20, 46, 66, 70, 167, 178, 185, 199, 224, 261, 309, 313, 318, 349, 412, 423, 440, 454, 477, 478, 523, 540, 581, 588, 595,
+        #                654, 688, 691, 774, 798, 875, 898, 926, 970, 987, 1027, 1109, 1169, 1182, 1239, 1256, 1298, 1324, 1353, 1359, 1405, 1442, 1447]
+        # train.drop(train.index[outlier_idx], inplace=True)
         train["SalePrice"] = np.log1p(train["SalePrice"])
         all_data = pd.concat((train.loc[:, 'MSSubClass':'SaleCondition'],
                               test.loc[:, 'MSSubClass':'SaleCondition']))
@@ -407,6 +417,7 @@ def housing():
 
             param_grid = {
                 # 'alpha': [i*0.001 for i in range(1, 101, 2)]
+                'ridge__alpha': [i * 0.001 for i in range(1, 101, 2)]
             }
             grid = GridSearchCV(estimator=self.stacker, param_grid=param_grid, n_jobs=1, cv=5, scoring=RMSE)
             grid.fit(S_train, y)
@@ -492,16 +503,23 @@ def housing():
             n_estimators=500, max_depth=7,
             learning_rate=0.05, subsample=0.8, colsample_bytree=0.75
         ),
+
+        OrthogonalMatchingPursuit(n_nonzero_coefs=56),
+        SVR_pl,
+        MLP_pl,
+        BR_pl,
+        lasso,
+        ENet
         # KNeighborsRegressor(n_neighbors=5),
         # KNeighborsRegressor(n_neighbors=10),
         # KNeighborsRegressor(n_neighbors=15),
         # KNeighborsRegressor(n_neighbors=25),
         # LassoLarsCV(),
-        ElasticNet(),
-        SVR(),
-        Ridge(),
-        BayesianRidge(),
-        OrthogonalMatchingPursuit(),
+        # ElasticNet(),
+        # SVR(),
+        # Ridge(),
+        # BayesianRidge(),
+        # OrthogonalMatchingPursuit(),
         # ENet,
         # GBoost,
         # KRR,
@@ -530,37 +548,34 @@ def housing():
     #                       'colsample_bytree': [0.8],
     #                   }
 
-    X_train, X_test, y_train = preprocess_data(train, test)
+    X_train, X_test, y_train = data_preprocess(train, test)
 
-    ensem = ensemble(n_folds=5, stacker=Ridge(), base_models=base_models)
+    # X_train, X_test, y_train = preprocess_data(train, test)
+
+    r_pl = make_pipeline(RobustScaler(), Ridge())
+
+    ensem = ensemble(n_folds=5, stacker=r_pl, base_models=base_models)
 
     y_pred, score = ensem.fit_predict(X_train, X_test, y_train)
 
-    class AveragingModels(BaseEstimator, RegressorMixin, TransformerMixin):
-        def __init__(self, models):
-            self.models = models
 
-        # we define clones of the original models to fit the data in
-        def fit(self, X, y):
-            self.models_ = [clone(x) for x in self.models]
+    # pl = make_pipeline(RobustScaler(), MLPRegressor(activation='logistic', beta_1=0.2, beta_2=0.5, epsilon=2e-08, hidden_layer_sizes=200, learning_rate='adaptive', solver='lbfgs'))
 
-            # Train cloned base models
-            for model in self.models_:
-                model.fit(X, y)
 
-            return self
 
-        # Now we do the predictions for cloned models and average them
-        def predict(self, X):
-            predictions = np.column_stack([
-                model.predict(X) for model in self.models_
-            ])
-            return np.mean(predictions, axis=1)
+    # X_train_scaled = RobustScaler(quantile_range=(5,95)).fit_transform(X_train)
 
-    averaged_models = AveragingModels(models=(ENet, GBoost, KRR, lasso))
-
-    # print(-1 * cross_val_score(averaged_models, X_train, y_train,
+    # print(-cross_val_score(MLPRegressor(activation='logistic', beta_1=0.2, beta_2=0.5, epsilon=2e-08,
+    #                                     hidden_layer_sizes=200, learning_rate='adaptive', solver='lbfgs',
+    #                                     alpha=0.0001, learning_rate_init=0.001, max_iter=900),
+    #                        X_train_scaled, y_train,
     #                          scoring=RMSE, cv=5).mean())
+    #
+    # print(-cross_val_score(
+    #     MLPRegressor(activation='logistic', hidden_layer_sizes=1000, learning_rate='invscaling',
+    #                  solver='lbfgs', alpha=0.00001, max_iter=1000), X_train_scaled, y_train,
+    #     scoring=RMSE, cv=3).mean())
+
 
     # res = untuned_model_finder(X_train, y_train, models, RMSE, 5, threshold=0.15)
     # for elem in res[0]:
@@ -570,7 +585,15 @@ def housing():
 
 
 
-    # grid_searcher(X_train, X_test, y_train, KNeighborsRegressor(), {'n_neighbors': range(1, 101, 1)})
+    # grid_searcher(X_train_scaled, X_test, y_train, MLPRegressor(),
+    #               {'hidden_layer_sizes': [500, 1000, 1500, 2000, 3000],
+    #                'activation': ['logistic'],
+    #                'solver': ['lbfgs'],
+    #                'learning_rate': ['adaptive'],
+    #                'alpha': [0.00001, 0.001, 0.01, 0.1, 1, 10, 100, 1000],
+    #                'max_iter': [200, 5000],
+    #                }
+    #               )
     # grid_searcher(Xtrain, Xtest, ytrain, gbr[0], gbr[1])
 
     # test_predict, score = model_random_forecast(Xtrain,Xtest,ytrain)
@@ -578,7 +601,7 @@ def housing():
     # test_predict, score = model_extra_trees_regression(Xtrain, Xtest, ytrain)
     # test_predict, score = model_gradient_boosting_tree(Xtrain,Xtest,ytrain)
 
-    # create_submission(np.exp(y_pred), score)
+    create_submission(np.exp(y_pred), score)
 
 
 
